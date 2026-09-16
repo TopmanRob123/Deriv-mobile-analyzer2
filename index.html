@@ -128,7 +128,7 @@ function addTick(epoch,quote,pip){
 }
 function connect(){
   if(ws) try{ws.close()}catch(e){}
-  clearTimeout(connectTimer);
+  clearInterval(window.tickPoller);
   ticks=[];
   const sym=$('symbol').value;
   setStatus('Connecting…');
@@ -136,25 +136,19 @@ function connect(){
 
   ws=new WebSocket(WS);
 
-  connectTimer=setTimeout(()=>{
-    if(ws && ws.readyState===1 && ticks.length===0){
-      diag('Connected, waiting for Deriv market data…');
-    }
-  },5000);
-
   ws.onopen=()=>{
     running=true;
     setStatus('Connected • loading',true);
-    diag('Connected. Requesting 500 recent ticks + live subscription…');
+    diag('Connected. Loading 500 recent ticks…');
 
-    // One combined request: Deriv returns the recent history and then
-    // continues sending tick updates on the same subscription.
+    // Load history only. The live subscription endpoint is rejected for
+    // this symbol on the current API response, so we use lightweight polling
+    // for the newest tick instead.
     ws.send(JSON.stringify({
       ticks_history:sym,
       count:500,
       end:'latest',
       style:'ticks',
-      subscribe:1,
       req_id:1
     }));
   };
@@ -164,11 +158,8 @@ function connect(){
       const d=JSON.parse(e.data);
 
       if(d.error){
-        clearTimeout(connectTimer);
-        running=false;
         setStatus('API error');
-        const msg=(d.error.message||d.error.code||'Unknown Deriv API error');
-        diag('Deriv rejected the request: '+msg);
+        diag('Deriv API error: '+(d.error.message||d.error.code||'Unknown error'));
         return;
       }
 
@@ -177,33 +168,45 @@ function connect(){
         const times=d.history.times||[];
         ticks=[];
         for(let i=0;i<prices.length;i++){
-          const q=prices[i];
-          const n=Number(q);
-          if(Number.isFinite(n)){
-            const text=String(q);
-            const match=text.match(/(\d)$/);
-            if(match) ticks.push({time:times[i],quote:q,digit:Number(match[1])});
-          }
+          const q=prices[i], text=String(q), m=text.match(/(\d)$/);
+          if(m) ticks.push({time:times[i],quote:q,digit:Number(m[1])});
         }
         render();
         setStatus('Live • '+sym,true);
-        diag('Loaded '+ticks.length+' recent ticks. Live subscription is active.');
+        diag('Loaded '+ticks.length+' ticks. Live polling is active.');
+        clearInterval(window.tickPoller);
+
+        // Poll latest tick approximately twice per second. This avoids the
+        // invalid-symbol error returned by the direct ticks subscription.
+        window.tickPoller=setInterval(()=>{
+          if(ws && ws.readyState===1){
+            ws.send(JSON.stringify({
+              ticks_history:sym,
+              count:1,
+              end:'latest',
+              style:'ticks',
+              req_id:2
+            }));
+          }
+        },700);
         return;
       }
 
-      if(d.msg_type==='tick' && d.tick){
-        clearTimeout(connectTimer);
-        const q=d.tick.quote;
-        const n=Number(q);
-        if(Number.isFinite(n)){
-          const text=String(q);
-          const match=text.match(/(\d)$/);
-          if(match){
-            ticks.push({time:d.tick.epoch,quote:q,digit:Number(match[1])});
-            if(ticks.length>1000)ticks=ticks.slice(-1000);
-            render();
-            setStatus('Live • '+sym,true);
-            diag('Live tick received • '+new Date().toLocaleTimeString());
+      if(d.msg_type==='history' && d.echo_req && Number(d.echo_req.count)===1){
+        const prices=d.history?.prices||[], times=d.history?.times||[];
+        if(prices.length){
+          const q=prices[prices.length-1], text=String(q), m=text.match(/(\d)$/);
+          const t=times[times.length-1];
+          if(m){
+            const dig=Number(m[1]);
+            const last=ticks[ticks.length-1];
+            if(!last || last.time!==t){
+              ticks.push({time:t,quote:q,digit:dig});
+              if(ticks.length>1000)ticks=ticks.slice(-1000);
+              render();
+              setStatus('Live • '+sym,true);
+              diag('Live update • '+new Date().toLocaleTimeString());
+            }
           }
         }
       }
@@ -213,15 +216,15 @@ function connect(){
   };
 
   ws.onerror=()=>{
-    clearTimeout(connectTimer);
     running=false;
+    clearInterval(window.tickPoller);
     setStatus('Connection error');
-    diag('WebSocket connection failed. Reload Safari and try again.');
+    diag('WebSocket connection failed. Check Safari internet access and reload.');
   };
 
   ws.onclose=()=>{
-    clearTimeout(connectTimer);
     running=false;
+    clearInterval(window.tickPoller);
     if($('status').textContent!=='API error') setStatus('Disconnected');
   };
 }
@@ -267,7 +270,7 @@ function backtest(a){
 }
 $('start').onclick=connect;
 $('reconnect').onclick=connect;
-$('stop').onclick=()=>{if(ws)ws.close();running=false;setStatus('Stopped')};
+$('stop').onclick=()=>{clearInterval(window.tickPoller);if(ws)ws.close();running=false;setStatus('Stopped');diag('Stopped by user.')};
 $('symbol').onchange=()=>{if(running)connect()};
 $('window').onchange=render;
 $('clear').onclick=()=>{ticks=[];render();$('lastDigit').textContent='—';$('quote').textContent='Waiting for tick…';$('count').textContent='0 ticks collected';setStatus('Disconnected')};

@@ -126,14 +126,34 @@ function addTick(epoch,quote,pip){
   ticks.push({time:epoch,quote:quote,digit:dig});
   if(ticks.length>1000)ticks=ticks.slice(-1000);
 }
+let historyInitialized=false;
+
+function mergeHistory(prices,times,replace=false){
+  const incoming=[];
+  for(let i=0;i<prices.length;i++){
+    const q=prices[i], m=String(q).match(/(\d)$/);
+    if(m && times[i]!=null) incoming.push({
+      time:Number(times[i]),quote:q,digit:Number(m[1])
+    });
+  }
+  if(replace){
+    ticks=incoming.slice(-500);
+  }else{
+    const map=new Map(ticks.map(x=>[String(x.time),x]));
+    incoming.forEach(x=>map.set(String(x.time),x));
+    ticks=Array.from(map.values()).sort((a,b)=>a.time-b.time).slice(-1000);
+  }
+}
+
 function connect(){
   if(ws) try{ws.close()}catch(e){}
   clearInterval(window.tickPoller);
   ticks=[];
+  historyInitialized=false;
+
   const sym=$('symbol').value;
   setStatus('Connecting…');
   diag('Opening Deriv connection for '+sym+'…');
-
   ws=new WebSocket(WS);
 
   ws.onopen=()=>{
@@ -141,7 +161,7 @@ function connect(){
     setStatus('Connected • loading',true);
     diag('Connected. Loading 500 recent ticks…');
     ws.send(JSON.stringify({
-      ticks_history:sym,count:500,end:'latest',style:'ticks',req_id:1
+      ticks_history:sym,count:500,end:'latest',style:'ticks'
     }));
   };
 
@@ -155,48 +175,37 @@ function connect(){
         return;
       }
 
-      // IMPORTANT: only req_id 1 is the initial 500-tick history.
-      if(d.msg_type==='history' && d.history && Number(d.echo_req?.req_id)===1){
+      if(d.msg_type==='history' && d.history){
         const prices=d.history.prices||[];
         const times=d.history.times||[];
-        ticks=[];
-        for(let i=0;i<prices.length;i++){
-          const q=prices[i], m=String(q).match(/(\d)$/);
-          if(m) ticks.push({time:times[i],quote:q,digit:Number(m[1])});
-        }
-        render();
-        setStatus('Live • '+sym,true);
-        diag('Loaded '+ticks.length+' ticks. Live polling is active.');
 
-        clearInterval(window.tickPoller);
-        window.tickPoller=setInterval(()=>{
-          if(ws && ws.readyState===1){
-            ws.send(JSON.stringify({
-              ticks_history:sym,count:1,end:'latest',style:'ticks',req_id:2
-            }));
-          }
-        },1000);
-        return;
-      }
+        if(!historyInitialized){
+          mergeHistory(prices,times,true);
+          historyInitialized=true;
+          render();
+          setStatus('Live • '+sym,true);
+          diag('Loaded '+ticks.length+' ticks. Updating with fresh market data…');
 
-      // IMPORTANT: polling responses have req_id 2. Append them instead
-      // of replacing the 500-tick dataset.
-      if(d.msg_type==='history' && d.history && Number(d.echo_req?.req_id)===2){
-        const prices=d.history.prices||[], times=d.history.times||[];
-        if(prices.length){
-          const q=prices[prices.length-1], m=String(q).match(/(\d)$/);
-          const t=times[times.length-1];
-          if(m && (!ticks.length || ticks[ticks.length-1].time!==t)){
-            ticks.push({time:t,quote:q,digit:Number(m[1])});
-            if(ticks.length>1000)ticks=ticks.slice(-1000);
+          clearInterval(window.tickPoller);
+          window.tickPoller=setInterval(()=>{
+            if(ws && ws.readyState===1){
+              // Fetch a small recent batch and merge by timestamp.
+              // This avoids replacing the historical dataset with 1 tick.
+              ws.send(JSON.stringify({
+                ticks_history:sym,count:20,end:'latest',style:'ticks'
+              }));
+            }
+          },2000);
+        }else{
+          const before=ticks.length;
+          mergeHistory(prices,times,false);
+          if(ticks.length!==before || prices.length){
             render();
             setStatus('Live • '+sym,true);
-            diag('Live update • '+new Date().toLocaleTimeString()+' • '+ticks.length+' ticks');
+            diag('Fresh data received • '+new Date().toLocaleTimeString()+' • '+ticks.length+' unique ticks');
           }
         }
-        return;
       }
-
     }catch(err){
       diag('Browser error: '+err.message);
     }

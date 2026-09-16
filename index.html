@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Deriv Analyzer">
+<title>Deriv Mobile Tick Analyzer</title>
+<link rel="manifest" href="manifest.json">
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b1020;color:#f8fafc}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#0b1020,#111827);min-height:100vh}
+.wrap{max-width:760px;margin:auto;padding:18px 14px 40px}
+h1{font-size:25px;margin:4px 0 3px}.sub{color:#94a3b8;font-size:13px;margin-bottom:16px}
+.card{background:#172033;border:1px solid #26344d;border-radius:18px;padding:15px;margin:10px 0;box-shadow:0 8px 25px rgba(0,0,0,.16)}
+.row{display:flex;gap:9px;flex-wrap:wrap}.grow{flex:1;min-width:130px}
+label{display:block;font-size:12px;color:#9fb0c7;margin-bottom:6px}
+select,button{width:100%;min-height:46px;border-radius:12px;border:1px solid #34445f;background:#0f172a;color:#fff;padding:10px 12px;font-size:15px}
+button{font-weight:700;background:#2563eb;border:0}.stop{background:#374151}.secondary{background:#243148}
+.status{display:flex;align-items:center;gap:9px;font-weight:700}.dot{width:11px;height:11px;border-radius:50%;background:#ef4444}.dot.on{background:#22c55e}
+.big{display:flex;align-items:center;justify-content:space-between}.digit{font-size:64px;font-weight:800;line-height:1}.quote{font-size:13px;color:#94a3b8;text-align:right}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.stat{background:#0f172a;border-radius:13px;padding:12px}.k{font-size:11px;color:#94a3b8}.v{font-size:21px;font-weight:750;margin-top:3px}
+.bars{display:grid;gap:7px}.barrow{display:grid;grid-template-columns:22px 1fr 38px;gap:7px;align-items:center;font-size:12px}.track{height:12px;background:#26344d;border-radius:99px;overflow:hidden}.fill{height:100%;background:#60a5fa;border-radius:99px}
+.chips{display:flex;gap:6px;overflow:auto;padding:3px 0 6px}.chip{min-width:30px;text-align:center;padding:7px 5px;border-radius:9px;background:#243148;font-weight:700}
+.note{font-size:12px;color:#94a3b8;line-height:1.45}.signal{font-size:18px;font-weight:800}.signal small{display:block;font-size:12px;color:#94a3b8;font-weight:500;margin-top:4px}
+.warn{border-left:4px solid #f59e0b}.footer{font-size:11px;color:#718096;text-align:center;margin-top:15px}
+@media(min-width:650px){.grid{grid-template-columns:repeat(4,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Deriv Mobile Tick Analyzer</h1>
+  <div class="sub">iPhone-first statistics dashboard • no automatic trades</div>
+
+  <div class="card">
+    <div class="row">
+      <div class="grow"><label>Market</label><select id="symbol">
+        <option value="R_75">Volatility 75</option><option value="R_100">Volatility 100</option>
+        <option value="R_50">Volatility 50</option><option value="R_25">Volatility 25</option><option value="R_10">Volatility 10</option>
+      </select></div>
+      <div class="grow"><label>Analysis window</label><select id="window">
+        <option>50</option><option selected>100</option><option>250</option><option>500</option>
+      </select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="grow"><button id="start">▶ Start Live Data</button></div>
+      <div class="grow"><button id="stop" class="stop">■ Stop</button></div>
+    </div>
+    <div class="status" style="margin-top:12px"><span id="dot" class="dot"></span><span id="status">Disconnected</span></div>
+  </div>
+
+  <div class="card big">
+    <div><div class="k">LATEST DIGIT</div><div id="lastDigit" class="digit">—</div></div>
+    <div class="quote"><div id="quote">Waiting for tick…</div><div id="count">0 ticks collected</div></div>
+  </div>
+
+  <div class="card">
+    <div class="k" style="margin-bottom:8px">RECENT DIGITS</div>
+    <div id="chips" class="chips"><span class="note">Start live data to collect ticks.</span></div>
+  </div>
+
+  <div class="card">
+    <div class="k" style="margin-bottom:10px">DIGIT DISTRIBUTION</div>
+    <div id="bars" class="bars"></div>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div class="stat"><div class="k">HOT DIGIT</div><div id="hot" class="v">—</div></div>
+      <div class="stat"><div class="k">LOWEST FREQ</div><div id="cold" class="v">—</div></div>
+      <div class="stat"><div class="k">EVEN</div><div id="even" class="v">—</div></div>
+      <div class="stat"><div class="k">ODD</div><div id="odd" class="v">—</div></div>
+      <div class="stat"><div class="k">OVER 4 (5–9)</div><div id="over" class="v">—</div></div>
+      <div class="stat"><div class="k">UNDER 5 (0–4)</div><div id="under" class="v">—</div></div>
+      <div class="stat"><div class="k">CURRENT STREAK</div><div id="streak" class="v">—</div></div>
+      <div class="stat"><div class="k">ADJACENT REPEATS</div><div id="repeats" class="v">—</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="k">ROLLING BACKTEST</div>
+    <div class="signal" id="backtest">Need more ticks…</div>
+    <div class="note">Tests a simple rule: predict the most frequent digit in the previous 20 ticks, then check the next tick. This is historical testing, not a guarantee of future results.</div>
+  </div>
+
+  <div class="card">
+    <div class="k">STATISTICAL READOUT</div>
+    <div id="readout" class="signal">Collecting data…<small>No trade signal until enough observations are available.</small></div>
+  </div>
+
+  <div class="row">
+    <div class="grow"><button id="clear" class="secondary">Clear Data</button></div>
+    <div class="grow"><button id="export" class="secondary">Export CSV</button></div>
+  </div>
+
+  <div class="card warn">
+    <div class="note"><b>Important:</b> digit frequencies and streaks describe what has happened in the collected ticks. They do not prove what the next tick will be. Use demo trading and risk controls before considering real money.</div>
+  </div>
+  <div class="footer">Data is processed in your browser. The app does not place trades.</div>
+</div>
+
+<script>
+const WS='wss://ws.derivws.com/websockets/v3?app_id=1089';
+let ws=null, ticks=[], running=false;
+const $=id=>document.getElementById(id);
+function setStatus(t,on=false){$('status').textContent=t;$('dot').className='dot'+(on?' on':'')}
+function digitFromQuote(q){let s=String(q); let m=s.match(/(\d)$/); return m?Number(m[1]):null}
+function connect(){
+  if(ws) try{ws.close()}catch(e){}
+  const sym=$('symbol').value;
+  setStatus('Connecting…');
+  ws=new WebSocket(WS);
+  ws.onopen=()=>{running=true;setStatus('Live • '+sym,true);ws.send(JSON.stringify({ticks:sym,subscribe:1}))}
+  ws.onmessage=e=>{
+    try{let d=JSON.parse(e.data); if(d.tick){let q=d.tick.quote, dig=digitFromQuote(q); if(dig!==null){ticks.push({time:d.tick.epoch,quote:q,digit:dig}); let max=Number($('window').value); if(ticks.length>Math.max(max,600))ticks=ticks.slice(-Math.max(max,600)); render();}}}
+    catch(err){}
+  };
+  ws.onerror=()=>setStatus('Connection error');
+  ws.onclose=()=>{running=false;setStatus('Disconnected')}
+}
+function pct(n,d){return d?((n/d)*100).toFixed(1)+'%':'—'}
+function render(){
+  let w=Number($('window').value), a=ticks.slice(-w), n=a.length;
+  $('count').textContent=ticks.length+' ticks collected';
+  if(!n){return}
+  let counts=Array(10).fill(0); a.forEach(x=>counts[x.digit]++);
+  let max=Math.max(...counts), min=Math.min(...counts);
+  $('lastDigit').textContent=a[n-1].digit;
+  $('quote').textContent='Quote: '+a[n-1].quote;
+  $('hot').textContent=counts.indexOf(max)+' ('+pct(max,n)+')';
+  $('cold').textContent=counts.indexOf(min)+' ('+pct(min,n)+')';
+  let even=a.filter(x=>x.digit%2===0).length, over=a.filter(x=>x.digit>=5).length;
+  $('even').textContent=pct(even,n); $('odd').textContent=pct(n-even,n);
+  $('over').textContent=pct(over,n); $('under').textContent=pct(n-over,n);
+  let st=1; for(let i=n-2;i>=0&&a[i].digit===a[n-1].digit;i--)st++;
+  $('streak').textContent=a[n-1].digit+' × '+st;
+  let reps=0;for(let i=1;i<n;i++)if(a[i].digit===a[i-1].digit)reps++;
+  $('repeats').textContent=pct(reps,Math.max(1,n-1));
+
+  $('bars').innerHTML=counts.map((c,i)=>`<div class="barrow"><b>${i}</b><div class="track"><div class="fill" style="width:${max?c/max*100:0}%"></div></div><span>${c}</span></div>`).join('');
+  $('chips').innerHTML=a.slice(-50).map(x=>`<span class="chip">${x.digit}</span>`).join('');
+
+  if(n>=30){
+    let recent=a.slice(-20), rc=Array(10).fill(0);recent.forEach(x=>rc[x.digit]++);
+    let top=rc.indexOf(Math.max(...rc));
+    let share=rc[top]/20*100;
+    $('readout').innerHTML=`Digit ${top} is the most frequent in the last 20 (${share.toFixed(0)}%).<small>Descriptive only — not a prediction guarantee.</small>`;
+  }
+  backtest(a);
+}
+function backtest(a){
+  if(a.length<31){$('backtest').textContent='Need at least 31 ticks…';return}
+  let hits=0,total=0;
+  for(let i=20;i<a.length;i++){
+    let c=Array(10).fill(0);for(let j=i-20;j<i;j++)c[a[j].digit]++;
+    let p=c.indexOf(Math.max(...c));if(p===a[i].digit)hits++;total++;
+  }
+  $('backtest').textContent=`${hits}/${total} exact-digit hits (${(hits/total*100).toFixed(1)}%)`;
+}
+$('start').onclick=connect;
+$('stop').onclick=()=>{if(ws)ws.close();running=false;setStatus('Stopped')};
+$('symbol').onchange=()=>{if(running)connect()};
+$('window').onchange=render;
+$('clear').onclick=()=>{ticks=[];render();$('lastDigit').textContent='—';$('quote').textContent='Waiting for tick…';$('count').textContent='0 ticks collected';setStatus('Disconnected')};
+$('export').onclick=()=>{
+  if(!ticks.length)return;
+  let csv='epoch,quote,digit\n'+ticks.map(x=>`${x.time},${x.quote},${x.digit}`).join('\n');
+  let blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='deriv_ticks.csv';a.click();URL.revokeObjectURL(url)
+};
+render();
+</script>
+</body>
+</html>

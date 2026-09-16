@@ -95,6 +95,35 @@ button{font-weight:700;background:#2563eb;border:0}.stop{background:#374151}.sec
     <div class="grow"><button id="export" class="secondary">Export CSV</button></div>
   </div>
 
+
+  <div class="card">
+    <div class="k">PATTERN ENGINE</div>
+    <div id="patternEngine" class="signal">Collecting enough data…</div>
+    <div id="patternDetails" class="note">Comparing 20/50/100-tick windows, recency and historical transitions.</div>
+  </div>
+
+  <div class="card">
+    <div class="k">MULTI-WINDOW ANALYSIS</div>
+    <div class="grid">
+      <div class="stat"><div class="k">20-TICK HOT</div><div id="hot20" class="v">—</div></div>
+      <div class="stat"><div class="k">50-TICK HOT</div><div id="hot50" class="v">—</div></div>
+      <div class="stat"><div class="k">100-TICK HOT</div><div id="hot100" class="v">—</div></div>
+      <div class="stat"><div class="k">LONGEST GAP</div><div id="gap" class="v">—</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="k">STATISTICAL CANDIDATES</div>
+    <div id="candidates" class="signal">Need more ticks…</div>
+    <div class="note">A descriptive composite of recent frequency, recency, window agreement and transitions. It is not a guaranteed next-tick prediction.</div>
+  </div>
+
+  <div class="card">
+    <div class="k">DIGIT TRANSITIONS</div>
+    <div id="transition" class="signal">Need more ticks…</div>
+    <div class="note">Historical followers of the latest digit in the collected sample.</div>
+  </div>
+
   <div class="card">
     <div class="k">CONNECTION DIAGNOSTICS</div>
     <div id="diagnostic" class="note">Ready. Tap Start Live Data.</div>
@@ -253,17 +282,121 @@ function render(){
     let share=rc[top]/20*100;
     $('readout').innerHTML=`Digit ${top} is the most frequent in the last 20 (${share.toFixed(0)}%).<small>Descriptive only — not a prediction guarantee.</small>`;
   }
+  advancedAnalysis(a);
   backtest(a);
 }
-function backtest(a){
-  if(a.length<31){$('backtest').textContent='Need at least 31 ticks…';return}
-  let hits=0,total=0;
-  for(let i=20;i<a.length;i++){
-    let c=Array(10).fill(0);for(let j=i-20;j<i;j++)c[a[j].digit]++;
-    let p=c.indexOf(Math.max(...c));if(p===a[i].digit)hits++;total++;
-  }
-  $('backtest').textContent=`${hits}/${total} exact-digit hits (${(hits/total*100).toFixed(1)}%)`;
+
+function freq(arr){
+  const c=Array(10).fill(0);
+  arr.forEach(x=>c[x.digit]++);
+  return c;
 }
+function topDigit(arr){
+  if(!arr.length)return null;
+  const c=freq(arr),m=Math.max(...c);
+  return c.indexOf(m);
+}
+function gapForDigit(a,d){
+  for(let i=a.length-1,g=0;i>=0;i--,g++){
+    if(a[i].digit===d)return g;
+  }
+  return a.length;
+}
+function advancedAnalysis(a){
+  if(a.length<100){
+    $('patternEngine').textContent='Collecting enough data…';
+    $('candidates').textContent='Need at least 100 ticks…';
+    return;
+  }
+
+  const w20=a.slice(-20),w50=a.slice(-50),w100=a.slice(-100);
+  const c20=freq(w20),c50=freq(w50),c100=freq(w100);
+  const latest=a[a.length-1].digit;
+
+  let trans=Array(10).fill(0), totalTrans=0;
+  for(let i=1;i<a.length;i++){
+    if(a[i-1].digit===latest){trans[a[i].digit]++;totalTrans++;}
+  }
+
+  const rows=Array.from({length:10},(_,d)=>{
+    const f20=c20[d]/20, f50=c50[d]/50, f100=c100[d]/100;
+    let rec=0;
+    for(let j=1;j<=30;j++){
+      if(a[a.length-j].digit===d)rec+=1/j;
+    }
+    const transition=totalTrans?trans[d]/totalTrans:0;
+    const mean=(f20+f50+f100)/3;
+    const spread=Math.max(f20,f50,f100)-Math.min(f20,f50,f100);
+    const agreement=Math.max(0,1-spread*3);
+    const score=.45*mean+.20*Math.min(rec,1)+.15*transition+.20*agreement*mean;
+    return {d,f20,f50,f100,agreement,score,gap:gapForDigit(a,d)};
+  }).sort((x,y)=>y.score-x.score);
+
+  $('hot20').textContent=topDigit(w20);
+  $('hot50').textContent=topDigit(w50);
+  $('hot100').textContent=topDigit(w100);
+
+  const longest=Array.from({length:10},(_,d)=>({d,g:gapForDigit(a,d)}))
+    .sort((x,y)=>y.g-x.g)[0];
+  $('gap').textContent=longest.d+' ('+longest.g+')';
+
+  $('candidates').innerHTML=rows.slice(0,3).map((x,i)=>
+    `${i+1}. Digit ${x.d} <small>score ${x.score.toFixed(3)} • 20:${Math.round(x.f20*100)}% • 50:${Math.round(x.f50*100)}% • 100:${Math.round(x.f100*100)}%</small>`
+  ).join('<br>');
+
+  if(totalTrans){
+    const followers=Array.from({length:10},(_,d)=>({d,n:trans[d]}))
+      .filter(x=>x.n>0).sort((x,y)=>y.n-x.n).slice(0,3);
+    $('transition').innerHTML='After '+latest+': '+followers.map(x=>x.d+' ('+x.n+')').join(' • ');
+  }else{
+    $('transition').textContent='No historical transitions for the latest digit yet.';
+  }
+
+  const best=rows[0];
+  const second=rows[1];
+  let state='MIXED';
+  if(best.agreement>=.78)state='ALIGNED';
+  if(best.agreement<.50)state='UNSTABLE';
+
+  $('patternEngine').innerHTML=
+    `${state} • top statistical candidate: ${best.d}<small>window agreement ${Math.round(best.agreement*100)}% • next candidate ${second.d}</small>`;
+  $('patternDetails').textContent=
+    `Latest digit: ${latest}. This describes how the collected sample is behaving across multiple windows; it does not establish what the next tick must be.`;
+}
+
+function backtest(a){
+  if(a.length<101){
+    $('backtest').textContent='Need at least 101 ticks…';
+    return;
+  }
+
+  const lines=[];
+  for(const size of [20,50,100]){
+    let hits=0,total=0;
+    for(let i=size;i<a.length;i++){
+      const c=Array(10).fill(0);
+      for(let j=i-size;j<i;j++)c[a[j].digit]++;
+      const p=c.indexOf(Math.max(...c));
+      if(p===a[i].digit)hits++;
+      total++;
+    }
+    lines.push(`${size}-tick majority: ${hits}/${total} (${(hits/total*100).toFixed(1)}%)`);
+  }
+
+  let hits=0,total=0;
+  for(let i=30;i<a.length;i++){
+    const from=a[i-1].digit,c=Array(10).fill(0);
+    for(let j=1;j<i;j++)if(a[j-1].digit===from)c[a[j].digit]++;
+    if(c.some(x=>x>0)){
+      const p=c.indexOf(Math.max(...c));
+      if(p===a[i].digit)hits++;
+      total++;
+    }
+  }
+  if(total)lines.push(`Transition rule: ${hits}/${total} (${(hits/total*100).toFixed(1)}%)`);
+  $('backtest').innerHTML=lines.join('<br>');
+}
+
 $('start').onclick=connect;
 $('reconnect').onclick=connect;
 $('stop').onclick=()=>{clearInterval(window.tickPoller);if(ws)ws.close();running=false;setStatus('Stopped');diag('Stopped by user.')};

@@ -79,6 +79,29 @@ button{font-weight:700;background:#2563eb;border:0}.stop{background:#374151}.sec
     </div>
   </div>
 
+
+  <div class="card">
+    <div class="k">MULTI-WINDOW ANALYSIS</div>
+    <div class="grid">
+      <div class="stat"><div class="k">LAST 20 HOT</div><div id="hot20" class="v">—</div></div>
+      <div class="stat"><div class="k">LAST 50 HOT</div><div id="hot50" class="v">—</div></div>
+      <div class="stat"><div class="k">LAST 100 HOT</div><div id="hot100" class="v">—</div></div>
+      <div class="stat"><div class="k">LAST 20 GAP</div><div id="gap" class="v">—</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="k">CANDIDATE DIGITS — STATISTICAL CONSENSUS</div>
+    <div id="candidates" class="signal">Need more ticks…</div>
+    <div class="note">Candidates combine recent frequency, recency weighting, gap, and short-window agreement. They are statistical observations, not guaranteed next-tick outcomes.</div>
+  </div>
+
+  <div class="card">
+    <div class="k">DIGIT TRANSITIONS</div>
+    <div id="transition" class="signal">Need more ticks…</div>
+    <div class="note">Shows which digits have most often followed the latest digit in the collected history. Small samples can be unstable.</div>
+  </div>
+
   <div class="card">
     <div class="k">ROLLING BACKTEST</div>
     <div class="signal" id="backtest">Need more ticks…</div>
@@ -251,6 +274,7 @@ function render(){
   $('bars').innerHTML=counts.map((c,i)=>`<div class="barrow"><b>${i}</b><div class="track"><div class="fill" style="width:${max?c/max*100:0}%"></div></div><span>${c}</span></div>`).join('');
   $('chips').innerHTML=a.slice(-50).map(x=>`<span class="chip">${x.digit}</span>`).join('');
 
+  candidateAnalysis(a);
   if(n>=30){
     let recent=a.slice(-20), rc=Array(10).fill(0);recent.forEach(x=>rc[x.digit]++);
     let top=rc.indexOf(Math.max(...rc));
@@ -259,15 +283,77 @@ function render(){
   }
   backtest(a);
 }
-function backtest(a){
-  if(a.length<31){$('backtest').textContent='Need at least 31 ticks…';return}
-  let hits=0,total=0;
-  for(let i=20;i<a.length;i++){
-    let c=Array(10).fill(0);for(let j=i-20;j<i;j++)c[a[j].digit]++;
-    let p=c.indexOf(Math.max(...c));if(p===a[i].digit)hits++;total++;
-  }
-  $('backtest').textContent=`${hits}/${total} exact-digit hits (${(hits/total*100).toFixed(1)}%)`;
+
+function freq(arr){
+  let c=Array(10).fill(0); arr.forEach(x=>c[x.digit]++);
+  return c;
 }
+function topDigit(arr){
+  if(!arr.length)return null;
+  let c=freq(arr),m=Math.max(...c); return c.indexOf(m);
+}
+function gapForDigit(a,d){
+  for(let i=a.length-1,g=0;i>=0;i--,g++) if(a[i].digit===d)return g;
+  return a.length;
+}
+function candidateAnalysis(a){
+  if(a.length<50){$('candidates').textContent='Need at least 50 ticks…';return;}
+  let w20=a.slice(-20),w50=a.slice(-50),w100=a.slice(-100);
+  let c20=freq(w20),c50=freq(w50),c100=freq(w100);
+  let latest=a[a.length-1].digit;
+  let trans=Array(10).fill(0);
+  let transTotal=0;
+  for(let i=1;i<a.length;i++){
+    if(a[i-1].digit===latest){trans[a[i].digit]++;transTotal++}
+  }
+
+  let scores=Array.from({length:10},(_,d)=>{
+    let f20=c20[d]/20, f50=c50[d]/50, f100=c100[d]/100;
+    let gap=Math.min(gapForDigit(a,d),100)/100;
+    let rec=0, lim=Math.min(40,a.length);
+    for(let j=1;j<=lim;j++) if(a[a.length-j].digit===d){rec+=1/j}
+    let transRate=transTotal?trans[d]/transTotal:0;
+    // Descriptive composite only; deliberately not a probability.
+    return {d,score:.38*f20+.27*f50+.15*f100+.10*Math.min(rec,1)+.10*transRate, f20,f50,f100,gap,transRate};
+  }).sort((x,y)=>y.score-x.score);
+
+  $('candidates').innerHTML=scores.slice(0,3).map((x,i)=>
+    `${i+1}. Digit ${x.d} <small>composite ${x.score.toFixed(3)} • 20-tick ${Math.round(x.f20*100)}% • gap ${Math.round(x.gap*100)} ticks max</small>`
+  ).join('<br>');
+
+  $('hot20').textContent=topDigit(w20);
+  $('hot50').textContent=topDigit(w50);
+  $('hot100').textContent=topDigit(w100);
+
+  let gaps=Array.from({length:10},(_,d)=>({d,g:gapForDigit(a,d)})).sort((x,y)=>y.g-x.g);
+  $('gap').textContent=gaps[0].d+' ('+gaps[0].g+')';
+
+  if(transTotal){
+    let ts=Array.from({length:10},(_,d)=>({d,n:trans[d]})).sort((x,y)=>y.n-x.n);
+    let usable=ts.filter(x=>x.n>0).slice(0,3);
+    $('transition').innerHTML='After digit '+latest+': '+usable.map(x=>x.d+' ('+x.n+')').join(' • ');
+  }else{
+    $('transition').textContent='No matching transition history yet.';
+  }
+}
+
+function backtest(a){
+  if(a.length<101){$('backtest').textContent='Need at least 101 ticks…';return}
+  let rules=[20,50], results=[];
+  for(let windowSize of rules){
+    let hits=0,total=0;
+    for(let i=windowSize;i<a.length;i++){
+      let c=Array(10).fill(0);
+      for(let j=i-windowSize;j<i;j++)c[a[j].digit]++;
+      let p=c.indexOf(Math.max(...c));
+      if(p===a[i].digit)hits++;
+      total++;
+    }
+    results.push(windowSize+'-tick rule: '+hits+'/'+total+' ('+(hits/total*100).toFixed(1)+'%)');
+  }
+  $('backtest').innerHTML=results.join('<br>');
+}
+
 $('start').onclick=connect;
 $('reconnect').onclick=connect;
 $('stop').onclick=()=>{clearInterval(window.tickPoller);if(ws)ws.close();running=false;setStatus('Stopped');diag('Stopped by user.')};

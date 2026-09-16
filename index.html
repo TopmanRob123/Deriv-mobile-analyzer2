@@ -98,6 +98,7 @@ button{font-weight:700;background:#2563eb;border:0}.stop{background:#374151}.sec
   <div class="card">
     <div class="k">CONNECTION DIAGNOSTICS</div>
     <div id="diagnostic" class="note">Ready. Tap Start Live Data.</div>
+    <div style="margin-top:10px"><button id="reconnect" class="secondary">↻ Reconnect</button></div>
   </div>
 
   <div class="card warn">
@@ -131,66 +132,91 @@ function connect(){
   ticks=[];
   const sym=$('symbol').value;
   setStatus('Connecting…');
-  diag('Opening Deriv WebSocket connection…');
+  diag('Opening Deriv connection for '+sym+'…');
+
   ws=new WebSocket(WS);
 
   connectTimer=setTimeout(()=>{
     if(ws && ws.readyState===1 && ticks.length===0){
-      diag('Connected, but no tick data has arrived. The app will retry the market request.');
-      try{ws.send(JSON.stringify({ping:1,req_id:99}));}catch(e){}
+      diag('Connected, waiting for Deriv market data…');
     }
-  },8000);
+  },5000);
 
   ws.onopen=()=>{
     running=true;
-    setStatus('Connected • loading ticks',true);
-    diag('Connection established. Loading recent '+sym+' ticks first…');
-    ws.send(JSON.stringify({ticks_history:sym,count:500,end:'latest',style:'ticks',req_id:1}));
+    setStatus('Connected • loading',true);
+    diag('Connected. Requesting 500 recent ticks + live subscription…');
+
+    // One combined request: Deriv returns the recent history and then
+    // continues sending tick updates on the same subscription.
+    ws.send(JSON.stringify({
+      ticks_history:sym,
+      count:500,
+      end:'latest',
+      style:'ticks',
+      subscribe:1,
+      req_id:1
+    }));
   };
 
   ws.onmessage=e=>{
     try{
-      let d=JSON.parse(e.data);
+      const d=JSON.parse(e.data);
 
       if(d.error){
         clearTimeout(connectTimer);
         running=false;
         setStatus('API error');
-        diag('Deriv API error: '+(d.error.message||d.error.code||'Unknown error'));
+        const msg=(d.error.message||d.error.code||'Unknown Deriv API error');
+        diag('Deriv rejected the request: '+msg);
         return;
       }
 
       if(d.msg_type==='history' && d.history){
-        let prices=d.history.prices||[], times=d.history.times||[];
-        let pip=d.pip_size || (d.echo_req && d.echo_req.pip_size) || 2;
+        const prices=d.history.prices||[];
+        const times=d.history.times||[];
         ticks=[];
-        for(let i=0;i<prices.length;i++) addTick(times[i],prices[i],pip);
+        for(let i=0;i<prices.length;i++){
+          const q=prices[i];
+          const n=Number(q);
+          if(Number.isFinite(n)){
+            const text=String(q);
+            const match=text.match(/(\d)$/);
+            if(match) ticks.push({time:times[i],quote:q,digit:Number(match[1])});
+          }
+        }
         render();
         setStatus('Live • '+sym,true);
-        diag('Loaded '+ticks.length+' recent ticks. Starting live stream…');
-        ws.send(JSON.stringify({ticks:sym,subscribe:1,req_id:2}));
+        diag('Loaded '+ticks.length+' recent ticks. Live subscription is active.');
         return;
       }
 
       if(d.msg_type==='tick' && d.tick){
         clearTimeout(connectTimer);
-        let q=d.tick.quote, dig=digitFromQuote(q,d.tick.pip_size);
-        if(dig!==null){
-          addTick(d.tick.epoch,q,d.tick.pip_size);
-          render();
-          setStatus('Live • '+sym,true);
-          diag('Receiving live ticks from Deriv • last update '+new Date().toLocaleTimeString());
+        const q=d.tick.quote;
+        const n=Number(q);
+        if(Number.isFinite(n)){
+          const text=String(q);
+          const match=text.match(/(\d)$/);
+          if(match){
+            ticks.push({time:d.tick.epoch,quote:q,digit:Number(match[1])});
+            if(ticks.length>1000)ticks=ticks.slice(-1000);
+            render();
+            setStatus('Live • '+sym,true);
+            diag('Live tick received • '+new Date().toLocaleTimeString());
+          }
         }
       }
     }catch(err){
-      diag('Browser data error: '+err.message);
+      diag('Browser error: '+err.message);
     }
   };
 
   ws.onerror=()=>{
     clearTimeout(connectTimer);
+    running=false;
     setStatus('Connection error');
-    diag('The WebSocket connection failed. Check the iPhone internet connection and reload the page.');
+    diag('WebSocket connection failed. Reload Safari and try again.');
   };
 
   ws.onclose=()=>{
@@ -240,6 +266,7 @@ function backtest(a){
   $('backtest').textContent=`${hits}/${total} exact-digit hits (${(hits/total*100).toFixed(1)}%)`;
 }
 $('start').onclick=connect;
+$('reconnect').onclick=connect;
 $('stop').onclick=()=>{if(ws)ws.close();running=false;setStatus('Stopped')};
 $('symbol').onchange=()=>{if(running)connect()};
 $('window').onchange=render;

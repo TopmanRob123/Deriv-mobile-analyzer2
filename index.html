@@ -125,6 +125,12 @@ button{font-weight:700;background:#2563eb;border:0}.stop{background:#374151}.sec
   </div>
 
   <div class="card">
+    <div class="k">EMPIRICAL VALIDATION</div>
+    <div id="validation" class="signal">Need more ticks…</div>
+    <div id="validationDetails" class="note">Walk-forward tests use only information available before each historical tick.</div>
+  </div>
+
+  <div class="card">
     <div class="k">CONNECTION DIAGNOSTICS</div>
     <div id="diagnostic" class="note">Ready. Tap Start Live Data.</div>
     <div style="margin-top:10px"><button id="reconnect" class="secondary">↻ Reconnect</button></div>
@@ -303,98 +309,49 @@ function gapForDigit(a,d){
   return a.length;
 }
 function advancedAnalysis(a){
-  if(a.length<100){
+  const full=ticks.slice();
+  if(a.length<100 || full.length<100){
     $('patternEngine').textContent='Collecting enough data…';
     $('candidates').textContent='Need at least 100 ticks…';
-    return;
+    $('validation').textContent='Need at least 100 ticks…'; return;
   }
-
   const w20=a.slice(-20),w50=a.slice(-50),w100=a.slice(-100);
-  const c20=freq(w20),c50=freq(w50),c100=freq(w100);
-  const latest=a[a.length-1].digit;
-
-  let trans=Array(10).fill(0), totalTrans=0;
-  for(let i=1;i<a.length;i++){
-    if(a[i-1].digit===latest){trans[a[i].digit]++;totalTrans++;}
-  }
-
+  const c20=freq(w20),c50=freq(w50),c100=freq(w100),latest=a[a.length-1].digit;
+  let trans=Array(10).fill(0),totalTrans=0;
+  for(let i=1;i<full.length;i++) if(full[i-1].digit===latest){trans[full[i].digit]++;totalTrans++;}
   const rows=Array.from({length:10},(_,d)=>{
-    const f20=c20[d]/20, f50=c50[d]/50, f100=c100[d]/100;
-    let rec=0;
-    for(let j=1;j<=30;j++){
-      if(a[a.length-j].digit===d)rec+=1/j;
-    }
-    const transition=totalTrans?trans[d]/totalTrans:0;
-    const mean=(f20+f50+f100)/3;
-    const spread=Math.max(f20,f50,f100)-Math.min(f20,f50,f100);
-    const agreement=Math.max(0,1-spread*3);
+    const f20=c20[d]/20,f50=c50[d]/50,f100=c100[d]/100;
+    let rec=0; for(let j=1;j<=30&&j<=a.length;j++) if(a[a.length-j].digit===d) rec+=1/j;
+    const transition=totalTrans?trans[d]/totalTrans:0,mean=(f20+f50+f100)/3;
+    const spread=Math.max(f20,f50,f100)-Math.min(f20,f50,f100),agreement=Math.max(0,1-spread*3);
     const score=.45*mean+.20*Math.min(rec,1)+.15*transition+.20*agreement*mean;
-    return {d,f20,f50,f100,agreement,score,gap:gapForDigit(a,d)};
+    return {d,f20,f50,f100,agreement,score,gap:gapForDigit(full,d)};
   }).sort((x,y)=>y.score-x.score);
-
-  $('hot20').textContent=topDigit(w20);
-  $('hot50').textContent=topDigit(w50);
-  $('hot100').textContent=topDigit(w100);
-
-  const longest=Array.from({length:10},(_,d)=>({d,g:gapForDigit(a,d)}))
-    .sort((x,y)=>y.g-x.g)[0];
+  $('hot20').textContent=topDigit(w20); $('hot50').textContent=topDigit(w50); $('hot100').textContent=topDigit(w100);
+  const longest=Array.from({length:10},(_,d)=>({d,g:gapForDigit(full,d)})).sort((x,y)=>y.g-x.g)[0];
   $('gap').textContent=longest.d+' ('+longest.g+')';
-
-  $('candidates').innerHTML=rows.slice(0,3).map((x,i)=>
-    `${i+1}. Digit ${x.d} <small>score ${x.score.toFixed(3)} • 20:${Math.round(x.f20*100)}% • 50:${Math.round(x.f50*100)}% • 100:${Math.round(x.f100*100)}%</small>`
-  ).join('<br>');
-
-  if(totalTrans){
-    const followers=Array.from({length:10},(_,d)=>({d,n:trans[d]}))
-      .filter(x=>x.n>0).sort((x,y)=>y.n-x.n).slice(0,3);
-    $('transition').innerHTML='After '+latest+': '+followers.map(x=>x.d+' ('+x.n+')').join(' • ');
-  }else{
-    $('transition').textContent='No historical transitions for the latest digit yet.';
-  }
-
-  const best=rows[0];
-  const second=rows[1];
-  let state='MIXED';
-  if(best.agreement>=.78)state='ALIGNED';
-  if(best.agreement<.50)state='UNSTABLE';
-
-  $('patternEngine').innerHTML=
-    `${state} • top statistical candidate: ${best.d}<small>window agreement ${Math.round(best.agreement*100)}% • next candidate ${second.d}</small>`;
-  $('patternDetails').textContent=
-    `Latest digit: ${latest}. This describes how the collected sample is behaving across multiple windows; it does not establish what the next tick must be.`;
+  $('candidates').innerHTML=rows.slice(0,3).map((x,i)=>`${i+1}. Digit ${x.d} <small>score ${x.score.toFixed(3)} • 20:${Math.round(x.f20*100)}% • 50:${Math.round(x.f50*100)}% • 100:${Math.round(x.f100*100)}%</small>`).join('<br>');
+  if(totalTrans){const followers=Array.from({length:10},(_,d)=>({d,n:trans[d]})).filter(x=>x.n>0).sort((x,y)=>y.n-x.n).slice(0,3);$('transition').innerHTML='After '+latest+': '+followers.map(x=>x.d+' ('+x.n+')').join(' • ');} else $('transition').textContent='No historical transitions for the latest digit yet.';
+  const best=rows[0],second=rows[1]; let state='MIXED'; if(best.agreement>=.78)state='ALIGNED'; if(best.agreement<.50)state='UNSTABLE';
+  $('patternEngine').innerHTML=`${state} • top statistical candidate: ${best.d}<small>window agreement ${Math.round(best.agreement*100)}% • next candidate ${second.d}</small>`;
+  $('patternDetails').textContent=`Latest digit: ${latest}. The engine compares 20/50/100-tick behavior with the full collected history.`;
+  empiricalValidation(full);
+}
+function empiricalValidation(a){
+  if(a.length<201){$('validation').textContent=`${a.length}/201 ticks collected`;return;}
+  const rules=[20,50,100,200],out=[];
+  for(const size of rules){let hits=0,total=0;for(let i=size;i<a.length;i++){const c=Array(10).fill(0);for(let j=i-size;j<i;j++)c[a[j].digit]++;const p=c.indexOf(Math.max(...c));if(p===a[i].digit)hits++;total++;}out.push({name:size+'-tick majority',hits,total,rate:hits/total});}
+  let hits=0,total=0; for(let i=50;i<a.length;i++){const from=a[i-1].digit,c=Array(10).fill(0);for(let j=1;j<i;j++)if(a[j-1].digit===from)c[a[j].digit]++;if(c.some(x=>x>0)){const p=c.indexOf(Math.max(...c));if(p===a[i].digit)hits++;total++;}}
+  if(total)out.push({name:'Transition majority',hits,total,rate:hits/total});
+  const best=out.reduce((x,y)=>y.rate>x.rate?y:x),baseline=.10,delta=(best.rate-baseline)*100;
+  $('validation').innerHTML=`Best tested rule: ${best.name} • ${(best.rate*100).toFixed(1)}%<small>10.0% exact-digit baseline • ${best.total} walk-forward tests • ${delta>=0?'+':''}${delta.toFixed(1)} percentage points vs baseline</small>`;
+  $('validationDetails').innerHTML=out.map(x=>`${x.name}: ${(x.rate*100).toFixed(1)}% (${x.hits}/${x.total})`).join(' • ');
 }
 
 function backtest(a){
-  if(a.length<101){
-    $('backtest').textContent='Need at least 101 ticks…';
-    return;
-  }
-
-  const lines=[];
-  for(const size of [20,50,100]){
-    let hits=0,total=0;
-    for(let i=size;i<a.length;i++){
-      const c=Array(10).fill(0);
-      for(let j=i-size;j<i;j++)c[a[j].digit]++;
-      const p=c.indexOf(Math.max(...c));
-      if(p===a[i].digit)hits++;
-      total++;
-    }
-    lines.push(`${size}-tick majority: ${hits}/${total} (${(hits/total*100).toFixed(1)}%)`);
-  }
-
-  let hits=0,total=0;
-  for(let i=30;i<a.length;i++){
-    const from=a[i-1].digit,c=Array(10).fill(0);
-    for(let j=1;j<i;j++)if(a[j-1].digit===from)c[a[j].digit]++;
-    if(c.some(x=>x>0)){
-      const p=c.indexOf(Math.max(...c));
-      if(p===a[i].digit)hits++;
-      total++;
-    }
-  }
-  if(total)lines.push(`Transition rule: ${hits}/${total} (${(hits/total*100).toFixed(1)}%)`);
-  $('backtest').innerHTML=lines.join('<br>');
+  const full=ticks.slice(); if(full.length<201){$('backtest').textContent='Need at least 201 ticks…';return;}
+  const lines=[]; for(const size of [20,50,100,200]){let hits=0,total=0;for(let i=size;i<full.length;i++){const c=Array(10).fill(0);for(let j=i-size;j<i;j++)c[full[j].digit]++;const p=c.indexOf(Math.max(...c));if(p===full[i].digit)hits++;total++;}lines.push(`${size}-tick majority: ${hits}/${total} (${(hits/total*100).toFixed(1)}%)`);}
+  let hits=0,total=0;for(let i=50;i<full.length;i++){const from=full[i-1].digit,c=Array(10).fill(0);for(let j=1;j<i;j++)if(full[j-1].digit===from)c[full[j].digit]++;if(c.some(x=>x>0)){const p=c.indexOf(Math.max(...c));if(p===full[i].digit)hits++;total++;}}if(total)lines.push(`Transition majority: ${hits}/${total} (${(hits/total*100).toFixed(1)}%)`); $('backtest').innerHTML=lines.join('<br>');
 }
 
 $('start').onclick=connect;

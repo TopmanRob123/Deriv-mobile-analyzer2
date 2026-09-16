@@ -95,6 +95,11 @@ button{font-weight:700;background:#2563eb;border:0}.stop{background:#374151}.sec
     <div class="grow"><button id="export" class="secondary">Export CSV</button></div>
   </div>
 
+  <div class="card">
+    <div class="k">CONNECTION DIAGNOSTICS</div>
+    <div id="diagnostic" class="note">Ready. Tap Start Live Data.</div>
+  </div>
+
   <div class="card warn">
     <div class="note"><b>Important:</b> digit frequencies and streaks describe what has happened in the collected ticks. They do not prove what the next tick will be. Use demo trading and risk controls before considering real money.</div>
   </div>
@@ -103,23 +108,98 @@ button{font-weight:700;background:#2563eb;border:0}.stop{background:#374151}.sec
 
 <script>
 const WS='wss://ws.derivws.com/websockets/v3?app_id=1089';
-let ws=null, ticks=[], running=false;
+let ws=null, ticks=[], running=false, connectTimer=null;
 const $=id=>document.getElementById(id);
 function setStatus(t,on=false){$('status').textContent=t;$('dot').className='dot'+(on?' on':'')}
-function digitFromQuote(q){let s=String(q); let m=s.match(/(\d)$/); return m?Number(m[1]):null}
+function diag(t){$('diagnostic').textContent=t}
+function digitFromQuote(q,pip){
+  let n=Number(q);
+  if(!Number.isFinite(n)) return null;
+  let places=Number.isFinite(Number(pip))?Number(pip):2;
+  let scaled=Math.round(n*Math.pow(10,places));
+  return Math.abs(scaled)%10;
+}
+function addTick(epoch,quote,pip){
+  let dig=digitFromQuote(quote,pip);
+  if(dig===null)return;
+  ticks.push({time:epoch,quote:quote,digit:dig});
+  if(ticks.length>1000)ticks=ticks.slice(-1000);
+}
 function connect(){
   if(ws) try{ws.close()}catch(e){}
+  clearTimeout(connectTimer);
+  ticks=[];
   const sym=$('symbol').value;
   setStatus('Connecting…');
+  diag('Opening Deriv WebSocket connection…');
   ws=new WebSocket(WS);
-  ws.onopen=()=>{running=true;setStatus('Live • '+sym,true);ws.send(JSON.stringify({ticks:sym,subscribe:1}))}
-  ws.onmessage=e=>{
-    try{let d=JSON.parse(e.data); if(d.tick){let q=d.tick.quote, dig=digitFromQuote(q); if(dig!==null){ticks.push({time:d.tick.epoch,quote:q,digit:dig}); let max=Number($('window').value); if(ticks.length>Math.max(max,600))ticks=ticks.slice(-Math.max(max,600)); render();}}}
-    catch(err){}
+
+  connectTimer=setTimeout(()=>{
+    if(ws && ws.readyState===1 && ticks.length===0){
+      diag('Connected, but no tick data has arrived. The app will retry the market request.');
+      try{ws.send(JSON.stringify({ping:1,req_id:99}));}catch(e){}
+    }
+  },8000);
+
+  ws.onopen=()=>{
+    running=true;
+    setStatus('Connected • loading ticks',true);
+    diag('Connection established. Loading recent '+sym+' ticks first…');
+    ws.send(JSON.stringify({ticks_history:sym,count:500,end:'latest',style:'ticks',req_id:1}));
   };
-  ws.onerror=()=>setStatus('Connection error');
-  ws.onclose=()=>{running=false;setStatus('Disconnected')}
+
+  ws.onmessage=e=>{
+    try{
+      let d=JSON.parse(e.data);
+
+      if(d.error){
+        clearTimeout(connectTimer);
+        running=false;
+        setStatus('API error');
+        diag('Deriv API error: '+(d.error.message||d.error.code||'Unknown error'));
+        return;
+      }
+
+      if(d.msg_type==='history' && d.history){
+        let prices=d.history.prices||[], times=d.history.times||[];
+        let pip=d.pip_size || (d.echo_req && d.echo_req.pip_size) || 2;
+        ticks=[];
+        for(let i=0;i<prices.length;i++) addTick(times[i],prices[i],pip);
+        render();
+        setStatus('Live • '+sym,true);
+        diag('Loaded '+ticks.length+' recent ticks. Starting live stream…');
+        ws.send(JSON.stringify({ticks:sym,subscribe:1,req_id:2}));
+        return;
+      }
+
+      if(d.msg_type==='tick' && d.tick){
+        clearTimeout(connectTimer);
+        let q=d.tick.quote, dig=digitFromQuote(q,d.tick.pip_size);
+        if(dig!==null){
+          addTick(d.tick.epoch,q,d.tick.pip_size);
+          render();
+          setStatus('Live • '+sym,true);
+          diag('Receiving live ticks from Deriv • last update '+new Date().toLocaleTimeString());
+        }
+      }
+    }catch(err){
+      diag('Browser data error: '+err.message);
+    }
+  };
+
+  ws.onerror=()=>{
+    clearTimeout(connectTimer);
+    setStatus('Connection error');
+    diag('The WebSocket connection failed. Check the iPhone internet connection and reload the page.');
+  };
+
+  ws.onclose=()=>{
+    clearTimeout(connectTimer);
+    running=false;
+    if($('status').textContent!=='API error') setStatus('Disconnected');
+  };
 }
+function pct(n,d){return d?((n/d)*100).toFixed(1)+'%':'—'}
 function pct(n,d){return d?((n/d)*100).toFixed(1)+'%':'—'}
 function render(){
   let w=Number($('window').value), a=ticks.slice(-w), n=a.length;
